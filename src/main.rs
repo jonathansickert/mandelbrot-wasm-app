@@ -1,177 +1,143 @@
 use image::{ImageBuffer, RgbImage};
-use palette::{IntoColor, Lch, Srgb};
+use num_complex::Complex;
+use rayon::prelude::*;
+use std::env;
+use std::time::Instant;
 
-const MAX_ITER: u8 = std::u8::MAX;
+const MAX_ITER: usize = 255;
+const WIDTH: usize = 2560; //2560; 16384
+const HEIGHT: usize = 1600; //1600; 16384
 
-fn mandelbrot(x: f64, y: f64) -> u8 {
-    let mut re: f64 = x;
-    let mut im: f64 = y;
+const MANDELBROT_X_START: f64 = -2.0;
+const MANDELBROT_X_END: f64 = 2.0;
+const MANDELBROT_Y_START: f64 = -2.0;
+const MANDELBROT_Y_END: f64 = 2.0;
 
-    for i in 0..MAX_ITER {
-        let re2: f64 = re * re;
-        let im2: f64 = im * im;
+fn _mandelbrot_naive_smoothed(x: f64, y: f64) -> f64 {
+    let c: Complex<f64> = Complex::new(x, y);
+    let mut z: Complex<f64> = c;
+    let mut iter: f64 = 0.0;
 
-        if re2 + im2 > 4.0 {
-            return i;
-        }
-
-        im = 2.0 * re * im + y;
-        re = re2 - im2 + x;
+    while z.norm_sqr() <= 4.0 && iter < MAX_ITER as f64 {
+        z = z.powu(2) + c;
+        iter += 1.0;
     }
 
-    return MAX_ITER;
+    if iter < MAX_ITER as f64 {
+        let log_zn: f64 = z.norm().ln();
+        let nu: f64 = log_zn.ln() / std::f64::consts::LN_2;
+        iter = iter + 1.0 - nu;
+    }
+
+    return iter;
 }
 
-fn naive_mandelbrot(
-    width: usize,
-    height: usize,
+fn iters_to_colors_smooved(iter: f64, gradient: colorous::Gradient) -> [u8; 3] {
+    if iter == MAX_ITER as f64 {
+        return [0, 0, 0];
+    }
+    let color: colorous::Color = gradient.eval_continuous(iter / MAX_ITER as f64);
+    return [color.r, color.g, color.b];
+}
+
+fn mandelbrot_naive_smoothed(
     x_start: f64,
     x_end: f64,
     y_start: f64,
     y_end: f64,
-    vec: &mut Vec<u8>,
+    vec: &mut [u8],
+    gradient: colorous::Gradient,
 ) {
-    let dx: f64 = (x_end - x_start) / (width - 1) as f64;
-    let dy: f64 = (y_end - y_start) / (height - 1) as f64;
+    let dx: f64 = (x_end - x_start) / (WIDTH - 1) as f64;
+    let dy: f64 = (y_end - y_start) / (HEIGHT - 1) as f64;
 
-    for row in 0..height {
-        for col in 0..width {
-            let x: f64 = x_start + dx * col as f64;
-            let y: f64 = y_end - dy * row as f64;
-            vec[row * width + col] = mandelbrot(x, y);
-        }
-    }
+    vec.par_chunks_exact_mut(WIDTH * 3)
+        .enumerate()
+        .for_each(|(row, chunk)| {
+            let y: f64 = y_start + dy * row as f64;
+            for col in 0..WIDTH {
+                let x: f64 = x_start + dx * col as f64;
+                let iter: f64 = _mandelbrot_naive_smoothed(x, y);
+                let rgb: [u8; 3] = iters_to_colors_smooved(iter, gradient);
+                chunk[col * 3 + 0] = rgb[0];
+                chunk[col * 3 + 1] = rgb[1];
+                chunk[col * 3 + 2] = rgb[2];
+            }
+        });
 }
 
-// fn intensity_to_rainbow(v: u8) -> Rgb<u8> {
-//     let colors = [
-//         Rgb([148, 0, 211]), // Violet
-//         Rgb([75, 0, 130]),  // Indigo
-//         Rgb([0, 0, 255]),   // Blue
-//         Rgb([0, 255, 0]),   // Green
-//         Rgb([255, 255, 0]), // Yellow
-//         Rgb([255, 127, 0]), // Orange
-//         Rgb([255, 0, 0]),   // Red
-//     ];
+fn mandelbrot_naive_scaled(
+    x_center: f64,
+    y_center: f64,
+    zoom: f64,
+    vec: &mut [u8],
+    gradient: colorous::Gradient,
+) {
+    let mut x_start: f64 = x_center + MANDELBROT_X_START / zoom;
+    let mut x_end: f64 = x_center + MANDELBROT_X_END / zoom;
+    let mut y_start: f64 = y_center + MANDELBROT_Y_START / zoom;
+    let mut y_end: f64 = y_center + MANDELBROT_Y_END / zoom;
 
-//     let index = (v as usize * (colors.len() - 1)) / 255;
-//     colors[index]
-// }
+    let x_range: f64 = x_end - x_start;
+    let y_range: f64 = y_end - y_start;
+    let image_aspect_ratio: f64 = WIDTH as f64 / HEIGHT as f64;
+    let mandelbrot_aspect_ratio: f64 = x_range / y_range;
+    let adjustment_factor: f64 = image_aspect_ratio / mandelbrot_aspect_ratio;
 
-fn iters_to_rbg(iter: u8) -> Vec<u8> {
-    let colors: [(f32, f32, f32); 5] = [
-        (0.0, 0.0, 0.0), // Black
-        (1.0, 0.0, 0.0), // Red
-        (0.0, 0.0, 1.0), // Blue
-        (0.0, 1.0, 0.0), // Green
-        (0.0, 0.0, 0.0), // Black
-    ];
-
-    let normalized_iter: f32 = (iter as f32) / 255.0;
-
-    // Compute which two colors to interpolate between
-    let index = (norm_value * (colors.len() as f32 - 1.0)) as usize;
-    let next_index = (index + 1).min(colors.len() - 1);
-
-    // Interpolate between the two colors
-    let t = norm_value * (colors.len() as f32 - 1.0) - index as f32;
-    let (r1, g1, b1) = colors[index];
-    let (r2, g2, b2) = colors[next_index];
-
-    // Linear interpolation between colors
-    let r = r1 + t * (r2 - r1);
-    let g = g1 + t * (g2 - g1);
-    let b = b1 + t * (b2 - b1);
-
-    return vec![(r * 255.0) as u8, (b * 255.0) as u8, (g * 255.0) as u8];
-}
-
-fn intensity_to_hsv(iter_count: u8) -> Vec<f32> {
-    let normalized_iter = iter_count as f32 / 255.0;
-    return vec![
-        (normalized_iter * 360.0).powf(1.5) % 360.0,
-        100.0,
-        normalized_iter * 100.0,
-    ];
-}
-
-fn lch_to_rgb(lch: Vec<f32>) -> Vec<u8> {
-    let lch: Lch = Lch::new(lch[0], lch[1], lch[2]);
-    let rgb: Srgb = Srgb::from_linear(lch.into_color());
-
-    let r = (rgb.red * 255.0).clamp(0.0, 255.0).round() as u8;
-    let g = (rgb.green * 255.0).clamp(0.0, 255.0).round() as u8;
-    let b = (rgb.blue * 255.0).clamp(0.0, 255.0).round() as u8;
-
-    return vec![r, b, g];
-}
-
-fn intensity_to_lch(iters: u8) -> Vec<f32> {
-    let s: f32 = iters as f32 / 255.0;
-    let v: f32 = 1.0 - (std::f32::consts::PI * s).cos().powf(2.0);
-    return vec![
-        75.0 - (75.0 * v),
-        28.0 + (75.0 - (75.0 * v)),
-        (s * 360.0).powf(1.5) % 360.0,
-    ];
-}
-
-// fn iter_count_to_rgb(iter_count: u8) -> Vec<u8> {
-//     let s: f32 = 100.0;
-//     let n: f32 = 100.0;
-//     let v: f32 = ((iter_count as f32 / 255.0).powf(s) * n).powf(1.5) % n;
-//     let c: u8 = (v * 255.0) as u8;
-//     return vec![c, c, c];
-// }
-
-fn hsv_to_rgb(hsv: Vec<f32>) -> Vec<u8> {
-    let h = hsv[0].clamp(0.0, 360.0); // Hue: 0-360 degrees
-    let s = hsv[1].clamp(0.0, 1.0); // Saturation: 0-1
-    let v = hsv[2].clamp(0.0, 1.0); // Value: 0-1
-
-    let c = v * s; // Chroma
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
-
-    let (r_prime, g_prime, b_prime) = if h < 60.0 {
-        (c, x, 0.0)
-    } else if h < 120.0 {
-        (x, c, 0.0)
-    } else if h < 180.0 {
-        (0.0, c, x)
-    } else if h < 240.0 {
-        (0.0, x, c)
-    } else if h < 300.0 {
-        (x, 0.0, c)
+    if adjustment_factor > 1.0 {
+        let diff: f64 = (x_range * adjustment_factor - x_range) / 2.0;
+        x_start -= diff;
+        x_end += diff;
     } else {
-        (c, 0.0, x)
-    };
+        let diff: f64 = (y_range / adjustment_factor - y_range) / 2.0;
+        y_start -= diff;
+        y_end += diff;
+    }
 
-    let r: u8 = ((r_prime + m) * 255.0).round() as u8;
-    let g: u8 = ((g_prime + m) * 255.0).round() as u8;
-    let b: u8 = ((b_prime + m) * 255.0).round() as u8;
+    print!("{}, {}, {}, {}\n", x_start, x_end, y_start, y_end);
 
-    return vec![r, g, b];
+    mandelbrot_naive_smoothed(x_start, x_end, y_start, y_end, vec, gradient);
 }
 
 fn main() {
-    let width: usize = 3000;
-    let height: usize = 3000;
-    let mut vec: Vec<u8> = vec![0; width * height];
+    let start_mandelbrot: Instant = std::time::Instant::now();
+    let mut vec: Box<[u8]> = vec![0; WIDTH * 3 * HEIGHT].into_boxed_slice();
 
-    naive_mandelbrot(width, height, -1.0, 0.0, 0.0, 1.0, &mut vec);
+    let args: Vec<String> = env::args().collect();
 
-    print!("done!\n");
+    let x_center: f64 = match args[1].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            eprintln!("Error: '{}' is not a valid float64.", args[1]);
+            std::process::exit(1);
+        }
+    };
 
-    let img: RgbImage = ImageBuffer::from_raw(
-        width as u32,
-        height as u32,
-        vec.into_iter()
-            .flat_map(|v| iters_to_rbg(v))
-            .collect::<Vec<u8>>(),
-    )
-    .expect("Failed to create image buffer");
+    let y_center: f64 = match args[2].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            eprintln!("Error: '{}' is not a valid float64.", args[2]);
+            std::process::exit(1);
+        }
+    };
 
-    // Save the image
-    img.save("img3.png").unwrap();
+    let zoom: f64 = match args[3].parse() {
+        Ok(num) => num,
+        Err(_) => {
+            eprintln!("Error: '{}' is not a valid integer.", args[3]);
+            std::process::exit(1);
+        }
+    };
+
+    mandelbrot_naive_scaled(x_center, y_center, zoom, &mut vec, colorous::TURBO);
+
+    print!("Mandelbrot: {}\n", start_mandelbrot.elapsed().as_secs_f32());
+
+    let start_saving: Instant = std::time::Instant::now();
+    let img: RgbImage = ImageBuffer::from_raw(WIDTH as u32, HEIGHT as u32, vec.to_vec())
+        .expect("Failed to create image buffer");
+
+    img.save("output.png").unwrap();
+
+    print!("Saving: {}\n", start_saving.elapsed().as_secs_f32());
 }
