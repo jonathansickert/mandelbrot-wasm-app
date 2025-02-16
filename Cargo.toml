@@ -22,4 +22,3 @@ web-sys = { version = "0.3.77", features = [
     "HtmlCanvasElement",
     "CssStyleDeclaration",
 ] }
-yew = "0.21.0"
