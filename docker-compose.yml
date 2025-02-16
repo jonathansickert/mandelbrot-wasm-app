@@ -1,0 +1,7 @@
+services:
+  mandelbrot-app:
+    build: .
+    container_name: mandelbrot-app
+    image: mandelbrot-app
+    ports:
+      - "7878:80"
