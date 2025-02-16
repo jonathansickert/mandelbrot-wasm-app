@@ -1,0 +1,1 @@
+A mandelbrot visualizer using **only** rust, **no** JavaScript
